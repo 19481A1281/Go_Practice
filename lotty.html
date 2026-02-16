@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lottie Animation Example</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }
+
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Method 1: Using div container */
+        #lottie-container {
+            width: 300px;
+            height: 300px;
+            margin: 20px auto;
+        }
+
+        /* Method 2: Using lottie-player web component */
+        lottie-player {
+            width: 300px;
+            height: 300px;
+            margin: 20px auto;
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .code-example {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: left;
+            margin-top: 30px;
+            font-family: monospace;
+            font-size: 14px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Method 1: Using Lottie Web Library</h2>
+        <p>Load animation programmatically with JavaScript</p>
+        <div id="lottie-container"></div>
+
+        <div class="code-example">
+            &lt;script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"&gt;&lt;/script&gt;<br><br>
+            &lt;div id="lottie-container"&gt;&lt;/div&gt;<br><br>
+            &lt;script&gt;<br>
+            &nbsp;&nbsp;var animation = lottie.loadAnimation({<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;container: document.getElementById('lottie-container'),<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;renderer: 'svg', // or 'canvas' or 'html'<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;loop: true,<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;autoplay: true,<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;path: "C:\Users\bhanu\Downloads\payment processing.lottie" // or .lottie file<br>
+            &nbsp;&nbsp;});<br>
+            &lt;/script&gt;
+        </div>
+    </div>
+
+    <div class="container" style="margin-top: 30px;">
+        <h2>Method 2: Using Lottie Player (Easier)</h2>
+        <p>Simple web component, just add the tag</p>
+        
+        <!-- Lottie Player Example -->
+        <lottie-player
+            src="C:\Users\bhanu\Downloads\payment processing.lottie"
+            background="transparent"
+            speed="1"
+            style="width: 300px; height: 300px; margin: 20px auto;"
+            loop
+            autoplay>
+        </lottie-player>
+
+        <div class="code-example">
+            &lt;script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"&gt;&lt;/script&gt;<br><br>
+            &lt;lottie-player<br>
+            &nbsp;&nbsp;src="path/to/your-animation.lottie"<br>
+            &nbsp;&nbsp;background="transparent"<br>
+            &nbsp;&nbsp;speed="1"<br>
+            &nbsp;&nbsp;style="width: 300px; height: 300px;"<br>
+            &nbsp;&nbsp;loop<br>
+            &nbsp;&nbsp;autoplay&gt;<br>
+            &lt;/lottie-player&gt;
+        </div>
+    </div>
+
+    <!-- Include Lottie Player Library -->
+    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+    
+    <!-- Include Lottie Web Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+    
+    <!-- Example using Lottie Web -->
+    <script>
+        var animation = lottie.loadAnimation({
+            container: document.getElementById('lottie-container'),
+            renderer: 'svg',
+            loop: true,
+            autoplay: true,
+            // Using a sample animation from LottieFiles
+            path: 'https://assets2.lottiefiles.com/packages/lf20_uu0x8lqv.json'
+        });
+
+        // Optional: Control the animation
+        // animation.play();
+        // animation.pause();
+        // animation.stop();
+        // animation.setSpeed(0.5); // Half speed
+    </script>
+</body>
+</html>
