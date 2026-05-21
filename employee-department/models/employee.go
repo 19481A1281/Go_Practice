@@ -1,15 +1,9 @@
 package models
 
-import (
-	"gorm.io/gorm"
-)
+type Employee struct{
+	ID uint `json:"id" gorm:"primaryKey"`
+	Name string `json:"name" gorm:"type:varchar(20);not null"`
+	DepartmentID uint `json:"department" gorm:"column:department;not null"`
 
-type Employee struct {
-	gorm.Model
-
-	EmployeeName string `gorm:"type:varchar(100);not null" json:"employeeName"`
-	Email        string `gorm:"type:varchar(100);not null;unique" json:"email"`
-
-	DepartmentID uint   `gorm:"not null" json:"departmentId"`
-
+	Department Department `json:"-" gorm:"foreignKey:DepartmentID"`
 }

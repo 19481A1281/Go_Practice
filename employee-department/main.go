@@ -1,40 +1,46 @@
 package main
 
 import (
+	"demo/employee-department/config"
+	"demo/employee-department/controllers"
+	"demo/employee-department/models"
+	"demo/employee-department/repositories"
+	"demo/employee-department/routes"
+	"demo/employee-department/services"
 	"fmt"
-	"log"
 
-	"github.com/19481A1281/employee-department/config"
-	"github.com/19481A1281/employee-department/models"
 	"github.com/gin-gonic/gin"
-	"github.com/19481A1281/employee-department/repository"
-	"github.com/19481A1281/employee-department/services"
-	"github.com/19481A1281/employee-department/controllers"
 )
 
-func main() {
-	
+func main(){
+	fmt.Println("Welcome to employee - department application")
 
-	db := config.ConnectDB()
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatal("Failed to get database connection")
+	mysqlCon, err := config.NewMysqlConnection()
+	if err !=nil{
+		panic(err)
 	}
-	defer sqlDB.Close()
-	log.Println("Connected to database successfully")
-	fmt.Println("Database connection established")
 
-	db.AutoMigrate(&models.Department{},&models.Employee{})
+	mysqlCon.DB.AutoMigrate(
+		&models.Department{},
+		&models.Employee{},
+	)
 
-	// 1. Initialize Layers
-	deptRepo := repository.NewDepartmentRepository(config.ConnectDB())
-	deptService := services.NewDepartmentService(deptRepo)
-	deptController := controllers.NewDepartmentController(deptService)
+	employeeRepo := repositories.NewEmployeeRepository(mysqlCon.DB)
+	departmentRepo := repositories.NewDepartmentRepositoty(mysqlCon.DB)
 
-	r := gin.Default()
+	employeeService := services.NewEmployeeService(employeeRepo)
+	departmentService := services.NewDepartmentService(departmentRepo)
 
-	// 2. The controller handles its own routing logic
-	deptController.RegisterRoutes(r)
 
-	r.Run(":8080")
+	employeeController := controllers.NewEmployeeController(employeeService)
+	departmentController := controllers.NewDepartmentController(departmentService)
+
+	router := gin.Default()
+	routes.SetupRoutes(
+		router,
+		employeeController,
+		departmentController,
+	)
+
+	router.Run(":8080")
 }

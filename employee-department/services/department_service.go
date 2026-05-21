@@ -1,34 +1,29 @@
 package services
 
 import (
-	"github.com/19481A1281/employee-department/models"
-	"github.com/19481A1281/employee-department/repository"
+	"demo/employee-department/models"
+	"demo/employee-department/repositories"
 )
 
-type DepartmentService struct {
-	departmentRepo repository.IDepartmentRepository
+type DepartmentService interface{
+	CreateDepartment(department *models.Department)error
+	GetDepartments() ([]models.Department, error)
 }
 
-func NewDepartmentService(departmentRepo repository.IDepartmentRepository) *DepartmentService {
-	return &DepartmentService{departmentRepo: departmentRepo}
+type departmentService struct{
+	repo repositories.DepartmentRepository
 }
 
-func (s *DepartmentService) CreateDepartment(department *models.Department) error {
-	return s.departmentRepo.CreateDepartment(department)
+func NewDepartmentService(repo repositories.DepartmentRepository) DepartmentService{
+	return &departmentService{
+		repo:repo,
+	}
 }
 
-func (s *DepartmentService) GetAllDepartments() ([]models.Department, error) {
-	return s.departmentRepo.GetAllDepartments()
+func(s *departmentService) CreateDepartment(department *models.Department) error{
+	return s.repo.Create(department)
 }
 
-func (s *DepartmentService) GetDepartmentByID(id uint) (*models.Department, error) {
-	return s.departmentRepo.GetDepartmentByID(id)
-}
-
-func (s *DepartmentService) UpdateDepartment(department *models.Department) error {
-	return s.departmentRepo.UpdateDepartment(department)
-}
-
-func (s *DepartmentService) DeleteDepartment(id uint) error {
-	return s.departmentRepo.DeleteDepartment(id)
+func(s *departmentService) GetDepartments()([]models.Department, error){
+	return s.repo.GetAll()
 }
