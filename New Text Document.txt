@@ -1,14 +1,614 @@
-package main
-import "fmt"
+# Duplicate Request Analysis: Enach (Mandate) Component - Razorpay + Digio Only
 
-func main() {
-  for i:=0; i<5;i++{
-      for j:=5;j>=i;j--{
-          fmt.Print(" ")
-      }
-      for j:=0;j<i+1;j++{
-          fmt.Print("* ")
-      }
-      fmt.Println()
-  }
+## Critical Issues Causing Duplicate Mandate Requests
+
+### 1. **MULTIPLE CONCURRENT MANDATE REQUESTS** ❌ CRITICAL
+
+**File:** [customer-ui/src/app/bitly/enach/enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L233)
+
+Focus is on **Razorpay** (default) and **Digio** mandate flows only.
+
+#### Current Setup Flow
+```typescript
+async setup(mandateType){
+    if(!this.crd.status){
+      return false;
+    }
+    
+    if (this.loanDetail.eMandatePartner == "DIGIO") {
+      this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe(...);
+    } else {
+      // Razorpay (default)
+      this.loanService.paymentMeta(this.tokenId, mandateType).subscribe(...);
+    }
+    
+    this.showPage = false;  // ← Only flag, no request tracking
 }
+```
+
+#### Problem
+- **No request deduplication guard**
+- User can click "Setup" button multiple times
+- Each click triggers a new mandate creation request
+- **Result:** Multiple mandates created in database
+
+---
+
+### 2. **NO MANDATE STATUS CHECK ON COMPONENT INIT** ❌ CRITICAL
+
+**File:** [customer-ui/src/app/bitly/enach/enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L51)
+
+#### Current Code (MISSING CHECK)
+```typescript
+ngOnInit() {
+    this.activeRoute.data.subscribe((res: any) => {
+      this.loanDetail = res.loanDetail;
+      this.tokenId = this.loanDetail.token;
+      
+      // NO CHECK for existing mandate status!
+      // Backend now returns RazorpayMandateDetails from getLoanApplicationState
+      
+      this.showEnachProcess = this.loanDetail.initialPaymentAmount ? 
+        (this.loanDetail.applicationStatus == applicationStatus.PAYMENT_DONE ? true : false): 
+        true;
+    });
+}
+```
+
+#### The Problem
+- **Backend now returns mandate details** via `loanApplication.Loan.RazorpayMandateDetails`
+- **Frontend ignores this data** and doesn't check mandate status
+- If mandate is already created/completed, component still shows "Setup" button
+- Customer clicks → **Duplicate mandate created**
+
+#### Backend Now Provides
+```typescript
+// getLoanApplicationState includes:
+Loan: {
+    DigioEsignRequest: { ... },
+    RazorpayMandateDetails: {  // ✅ NEW
+        id: 123,
+        mandateStatus: 'Completed',
+        mandateId: 'mandate_xxx',
+        customerId: 'customer_123',
+        orderId: 'order_456',
+        eMandatePartner: 'RAZORPAY' | 'DIGIO'
+    }
+}
+```
+
+---
+
+### 3. **NO IDEMPOTENCY CHECK ON BACKEND FOR MANDATE** ❌ CRITICAL
+
+The backend should validate before creating a new mandate.
+
+#### Expected Backend Check (MISSING)
+```typescript
+// Backend should do this before creating mandate:
+const existingMandate = await db.RazorpayMandateDetails.findOne({
+    where: { loanId: loanApplication.Loan.id }
+});
+
+if (existingMandate) {
+    if (existingMandate.mandateStatus === 'Completed' || 
+        existingMandate.mandateStatus === 'Success') {
+        return sendErrorResponse(res, 'Mandate already completed', BAD_REQUEST);
+    }
+    
+    if (timeSinceLastRequest < 5000) {  // Less than 5 seconds
+        return sendErrorResponse(res, 'Mandate request already in progress', BAD_REQUEST);
+    }
+}
+```
+
+---
+
+### 4. **NO REQUEST DEDUPLICATION GUARD** ❌ HIGH
+
+**File:** [customer-ui/src/app/bitly/enach/enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L233)
+
+#### Problem: Multiple Concurrent Requests
+```typescript
+async setup(mandateType){
+    // ✗ NO GUARD - can be called multiple times
+    this.loanService.paymentMeta(this.tokenId, mandateType).subscribe(...);
+    this.showPage = false;
+}
+```
+
+**Result:** If user clicks "Setup" button 3 times → 3 mandates created
+
+---
+
+### 5. **RAZORPAY CALLBACK CAN FIRE MULTIPLE TIMES** ❌ MEDIUM
+
+**File:** [customer-ui/src/app/bitly/enach/enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L151)
+
+```typescript
+public options: any = {
+    // ...
+    handler: this.paymentResponseHandler.bind(this),
+    modal: {
+      ondismiss: (() => {
+        this.onEmandateDismiss();
+      })
+    }
+};
+```
+
+#### Issues
+1. **Callback can fire multiple times** - Network glitch could fire callback twice
+2. **No callback deduplication** - Each callback fires `paymentResponseHandler()`
+3. **No timeout** - If callback never fires, UI hangs
+4. **Similar to eSign issues** - No polling fallback for Razorpay
+
+---
+
+### 6. **DIGIO CALLBACK RACE CONDITION** ❌ MEDIUM
+
+**File:** [customer-ui/src/app/bitly/enach/enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L243)
+
+```typescript
+if (this.loanDetail.eMandatePartner == "DIGIO") {
+    this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe((res: any) => {
+        var options = {
+            callback: response => {
+                if (response.error_code != undefined) {
+                    // Error
+                } else {
+                    this.loanService.digioMandateStatus(this.tokenId).subscribe((res: any) => {
+                        this.paymentResponseHandler({ ...res.data, eMandatePartner: "DIGIO" });
+                    });
+                }
+            }
+        };
+        var digio = new this.winRef.nativeWindow['Digio'](options);
+        digio.init();
+        digio.submit(res.data.mandateId, ...);
+    });
+}
+```
+
+#### Issues
+1. **Callback fires multiple times** - Network glitch could trigger callback twice
+2. **No callback deduplication** - Each callback invocation calls `paymentResponseHandler()`
+
+---
+
+### 8. **ERROR HANDLING DOESN'T RESET STATE** ❌ MEDIUM
+
+```typescript
+this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe(
+    (res: any) => {
+        // Success path
+    }
+    // ← NO error handler!
+);
+```
+
+#### Problem
+- If `digioPaymentMeta()` fails, `showPage` stays false
+- UI remains blank with no error message
+- User thinks system is processing
+- No retry capability
+
+---
+
+## Comparison: eSign vs Enach Issues
+
+| Issue | eSign | Enach (Razorpay/Digio) | Severity |
+|-------|-------|-------|----------|
+| No status check on init | **YES** (we fixed) | **YES** - Missing RazorpayMandateDetails check | **CRITICAL** |
+| Multiple concurrent requests | **YES** (we fixed) | **YES** - No deduplication guard | **CRITICAL** |
+| No backend idempotency | **YES** (we fixed) | **MISSING** - No check before create | **CRITICAL** |
+| Callback can fire multiple times | **YES** (we fixed) | **YES** - Razorpay & Digio | **HIGH** |
+| No fallback status check | **YES** (we fixed) | Covered by fix #1 | **HIGH** |
+| State flag inconsistency | **YES** (we fixed) | **YES** - showPage not reset on error | **MEDIUM** |
+
+---
+
+## Recommended Fixes for Enach
+
+### Fix #1: Check Mandate Status on Init (CRITICAL)
+
+**Backend: Already returns RazorpayMandateDetails via getLoanApplicationState** ✅
+
+**Frontend:** Check in [enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L51)
+
+```typescript
+ngOnInit() {
+    this.activeRoute.data.subscribe((res: any) => {
+        this.loanDetail = res.loanDetail;
+        this.tokenId = this.loanDetail.token;
+        
+        // ✅ NEW: Check mandate status from backend
+        const mandateDetails = this.loanDetail.Loan?.RazorpayMandateDetails;
+        
+        if (mandateDetails) {
+            const status = mandateDetails.mandateStatus?.toLowerCase();
+            
+            if (status === 'completed' || status === 'success') {
+                this.toasterService.pop('success', '', 'Mandate already setup');
+                this.showEnachProcess = false;
+                return;  // Don't show setup buttons
+            }
+            
+            if (status === 'pending' || status === 'requested') {
+                this.toasterService.pop('info', '', 'Mandate setup in progress...');
+                this.showEnachProcess = false;
+                return;  // Show progress, not setup buttons
+            }
+        }
+        
+        // Normal flow: Show mandate setup options
+        this.showEnachProcess = this.loanDetail.initialPaymentAmount ? 
+            (this.loanDetail.applicationStatus == applicationStatus.PAYMENT_DONE ? true : false): 
+            true;
+    });
+}
+```
+
+---
+
+### Fix #2: Add Request Deduplication Guard (CRITICAL)
+
+**File:** [enach.component.ts](customer-ui/src/app/bitly/enach/enach.component.ts#L233)
+                let win = window.open(mandateUrl, 'eMudraPopup', popupOptions);
+                
+                // ✅ NEW: Message listener sets both flags
+                win.addEventListener('message', (event) => {
+                    if (event.data.status == 'success' && !mandateCompleted) {
+                        mandateCompleted = true;  // ✅ Set flag
+                        oThat.updateENach(event.data);
+                        oThat.showPage = true;
+                    }
+                });
+                
+                // ✅ NEW: Timer only calls if mandate NOT already handled
+                var timer = setInterval(function() { 
+                    if(win.closed && !mandateCompleted) {  // ✅ Check mandate not completed
+                        clearInterval(timer);
+                        popupClosed = true;
+                        oThat.showPage = true;
+                        // ✅ REMOVED: oThat.updateENach({}) - prevents empty call
+                        oThat.toasterService.pop('info', '', 'Mandate setup cancelled');
+                    }
+                }, 1000);
+            }
+        });
+        return;
+    }
+}
+```
+
+### Fix #2: Add Request Deduplication (CRITICAL)
+
+```typescript
+private mandateRequestInProgress = false;
+
+async setup(mandateType){
+    // ✅ NEW: Prevent multiple concurrent requests
+    if (this.mandateRequestInProgress) {
+        this.toasterService.pop('info', '', 'Mandate request already in progress. Please wait...');
+        return;
+    }
+    
+    if(!this.crd.status){
+      return false;
+    }
+    
+    this.mandateRequestInProgress = true;
+    this.showPage = false;
+    
+    if (this.loanDetail.eMandatePartner == "DIGIO") {
+      this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe(
+        (res: any) => {
+            this.mandateRequestInProgress = false;  // ✅ Reset on success
+            // ... rest of code
+        },
+        (error) => {
+            this.mandateRequestInProgress = false;  // ✅ Reset on error
+            this.showPage = true;
+            this.toasterService.pop('error', '', error.message);
+        }
+      );
+    }
+    // ... rest of mandate types
+}
+```
+
+### Fix #3: Check for Existing Mandate on Init (HIGH)
+
+```typescript
+ngOnInit() {
+    this.utilService.getCurrentPosition(this);
+    
+    this.activeRoute.data.subscribe((res: any) => {
+      this.loanDetail = res.loanDetail;
+      this.tokenId = this.loanDetail.token;
+      
+      // ✅ NEW: Check if mandate already exists (Backend now returns this via getLoanApplicationState)
+      if (this.loanDetail.Loan?.RazorpayMandateDetails) {
+          const mandateStatus = this.loanDetail.Loan.RazorpayMandateDetails.mandateStatus;
+          
+          // ✅ Completed mandate
+          if (mandateStatus === 'Completed' || mandateStatus === 'Success') {
+              this.handleMandateAlreadyCompleted();
+              return;
+          }
+          
+          // ✅ In progress mandate
+          if (mandateStatus === 'PENDING' || mandateStatus === 'requested') {
+              this.showEnachProcess = false;
+              this.toasterService.pop('info', '', 'Mandate setup is in progress...');
+              return;
+          }
+      }
+      
+      // Normal flow: Show mandate setup options
+      this.showEnachProcess = this.loanDetail.initialPaymentAmount ? 
+        (this.loanDetail.applicationStatus == applicationStatus.PAYMENT_DONE ? true : false): 
+        true;
+      
+      // ... rest of init code
+    });
+}
+
+private handleMandateAlreadyCompleted() {
+    this.toasterService.pop('success', '', 'Mandate already completed');
+    // Navigate to next step or show completion message
+}
+```
+
+### Fix #4: Add Request Deduplication Guard in setup() (CRITICAL)
+
+```typescript
+private mandateRequestInProgress = false;  // ✅ NEW: Add flag
+
+async setup(mandateType){
+    // ✅ NEW: Check if request already in progress
+    if (this.mandateRequestInProgress) {
+        this.toasterService.pop('warning', '', 'Mandate setup already in progress. Please wait...');
+        return;
+    }
+    
+    if(!this.crd.status){
+        return false;
+    }
+    
+    this.mandateRequestInProgress = true;  // ✅ Set flag
+    
+    try {
+        if (this.loanDetail.eMandatePartner == "DIGIO") {
+            this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe(
+                (res: any) => {
+                    // Handle response
+                },
+                (error) => {
+                    this.mandateRequestInProgress = false;  // ✅ Reset on error
+                    this.toasterService.pop('error', '', 'Failed to setup mandate');
+                }
+            );
+        } else {
+            // Razorpay (default)
+            this.loanService.paymentMeta(this.tokenId, mandateType).subscribe(
+                (res: any) => {
+                    // Handle response
+                },
+                (error) => {
+                    this.mandateRequestInProgress = false;  // ✅ Reset on error
+                    this.toasterService.pop('error', '', 'Failed to setup mandate');
+                }
+            );
+        }
+        
+        this.showPage = false;
+    } catch (error) {
+        this.mandateRequestInProgress = false;  // ✅ Reset on error
+        this.toasterService.pop('error', '', 'Failed to setup mandate');
+    }
+}
+```
+
+### Fix #5: Add Backend Mandate Idempotency Check (CRITICAL)
+
+**File:** Backend mandate creation endpoint (should check before creating)
+
+```typescript
+// In paymentMeta() or digioPaymentMeta() endpoints
+
+// Check if mandate already exists for this loan
+const existingMandate = await db.RazorpayMandateDetails.findOne({
+    where: { loanId: loanApplication.Loan.id }
+});
+
+if (existingMandate) {
+    // ✅ Check if already completed
+    if (existingMandate.mandateStatus === 'Success' || 
+        existingMandate.mandateStatus === 'Completed') {
+        return sendErrorResponse(
+            res,
+            'Mandate already completed. Please proceed to next step.',
+            BAD_REQUEST
+        );
+    }
+    
+    // ✅ Check if recently created (prevent duplicate requests within 5 seconds)
+    const timeSinceLastRequest = Date.now() - new Date(existingMandate.updatedAt).getTime();
+    if (timeSinceLastRequest < 5000) {
+        return sendErrorResponse(
+            res,
+            'Mandate request already in progress. Please wait...',
+            BAD_REQUEST
+        );
+    }
+}
+
+// ✅ ONLY create new mandate if none exists or enough time has passed
+const newMandate = await db.RazorpayMandateDetails.create({
+    loanId: loanApplication.Loan.id,
+    mandateStatus: 'requested',
+    eMandatePartner: 'RAZORPAY',
+    // ... other fields
+});
+```
+
+### Fix #6: Add Callback Deduplication for Razorpay (MEDIUM)
+
+```typescript
+private razorpayCallbackFired = false;  // ✅ NEW: Add flag
+
+public options: any = {
+    // ...
+    handler: this.paymentResponseHandler.bind(this),
+    modal: {
+      ondismiss: (() => {
+        this.onEmandateDismiss();
+      })
+    }
+};
+
+paymentResponseHandler(response: any) {
+    // ✅ NEW: Prevent duplicate callbacks
+    if (this.razorpayCallbackFired) {
+        return;
+    }
+    this.razorpayCallbackFired = true;
+    
+    if (response.razorpay_payment_id) {
+        this.loanService.eNach(this.tokenId, {
+            razorpayPaymentId: response.razorpay_payment_id
+        }).subscribe(
+            (res: any) => {
+                this.toasterService.pop('success', '', 'Mandate setup successful');
+                this.router.navigateByUrl(...);
+            },
+            (error) => {
+                this.razorpayCallbackFired = false;  // ✅ Reset on error
+                this.toasterService.pop('error', '', 'Failed to finalize mandate');
+            }
+        );
+    }
+}
+```
+
+### Fix #7: Add Callback Deduplication for Digio (MEDIUM)
+
+```typescript
+private digioCallbackFired = false;  // ✅ NEW: Add flag
+
+if (this.loanDetail.eMandatePartner == "DIGIO") {
+    this.loanService.digioPaymentMeta(this.tokenId, mandateType).subscribe(
+        (res: any) => {
+            var options = {
+                callback: (response) => {
+                    // ✅ NEW: Prevent duplicate callbacks
+                    if (this.digioCallbackFired) {
+                        return;
+                    }
+                    this.digioCallbackFired = true;
+                    
+                    if (response.error_code != undefined) {
+                        this.digioCallbackFired = false;  // ✅ Reset on error
+                        this.toasterService.pop('error', '', 'Digio mandate failed');
+                    } else {
+                        this.loanService.digioMandateStatus(this.tokenId).subscribe(
+                            (res: any) => {
+                                this.paymentResponseHandler({ ...res.data, eMandatePartner: "DIGIO" });
+                            },
+                            (error) => {
+                                this.digioCallbackFired = false;  // ✅ Reset on error
+                                this.toasterService.pop('error', '', 'Failed to fetch mandate status');
+                            }
+                        );
+                    }
+                }
+            };
+            var digio = new this.winRef.nativeWindow['Digio'](options);
+            digio.init();
+            digio.submit(res.data.mandateId, ...);
+        },
+        (error) => {  // ✅ NEW: Error handler
+            this.mandateRequestInProgress = false;
+            this.showPage = true;
+            this.toasterService.pop('error', '', 'Failed to initiate mandate: ' + error.message);
+        }
+    );
+}
+```
+
+---
+
+## Root Cause of Duplicate Mandates (Razorpay + Digio Only)
+
+### Scenario: Customer clicks Setup and mandate is created twice
+
+```
+Timeline:
+─────────────────────────────────────────────────────────────
+
+1. Component ngOnInit loads
+   └─> Backend returns RazorpayMandateDetails (if exists)
+   └─> ✗ Component ignores mandate status
+   └─> Shows Setup button even if mandate exists
+
+2. Customer clicks Setup button
+   └─> ✗ No deduplication guard
+   └─> ✗ mandateRequestInProgress flag doesn't exist
+   └─> Request #1 sent to backend
+   └─> Popup opens (Razorpay/Digio)
+
+3. [FAST CLICK - Before popup fully loads]
+   └─> Customer clicks Setup again
+   └─> ✗ No flag preventing second call
+   └─> Request #2 sent to backend
+   └─> Second request queued
+
+4. Backend processes Request #1
+   └─> ✗ No idempotency check
+   └─> Creates mandate #1 in DB
+
+5. Backend processes Request #2
+   └─> ✗ Still no validation that mandate exists
+   └─> Creates mandate #2 in DB ❌❌
+
+6. Callback fires:
+   - Razorpay callback → updateENach called
+   - Digio callback → digioMandateStatus fetched → paymentResponseHandler called
+   └─> Only processes one mandate, but two exist in DB
+```
+
+---
+
+## Testing Checklist
+
+- [ ] Click Setup button 5 times rapidly → Only 1 mandate created
+- [ ] Complete Razorpay mandate → Only 1 backend request made
+- [ ] Complete Digio mandate → Only 1 backend request made (callback fires once)
+- [ ] Refresh page with completed mandate → Doesn't show Setup button
+- [ ] Razorpay callback fires twice (network glitch) → Only processes first one
+- [ ] Digio callback fires twice → Only processes first one
+- [ ] Network error on setup → Error shown, can retry
+- [ ] Two concurrent requests → Backend rejects second one
+
+---
+
+## Implementation Priority
+
+1. **IMMEDIATE (Critical - Blocking duplicates):**
+   - ✅ Backend: Add RazorpayMandateDetails to getLoanApplicationState (DONE)
+   - Fix #1: Check existing mandate status in ngOnInit
+   - Fix #2: Add mandateRequestInProgress flag in setup()
+   - Fix #4: Backend idempotency check before creating mandate
+
+2. **URGENT (High - Improves UX):**
+   - Fix #6: Add razorpayCallbackFired flag for Razorpay
+   - Fix #7: Add digioCallbackFired flag for Digio
+   - Add error handlers with proper reset of flags
+
+3. **MEDIUM (Nice to have - Edge cases):**
+   - Timeout handling for long-running popups
+   - Retry logic with exponential backoff
+   - Network error recovery UI
+
