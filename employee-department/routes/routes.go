@@ -18,11 +18,15 @@ func SetupRoutes(
 		employees.GET("/", employeeController.GetAll)
 		employees.GET("/:id", employeeController.GetByID)
 		employees.DELETE("/:id", employeeController.Delete)
+		employees.PUT("/:id",employeeController.Update)
 	}
 
 	departments := router.Group("/departments")
 	{
 		departments.POST("/", departmentController.Create)
 		departments.GET("/", departmentController.GetAll)
+		departments.GET("/:id",departmentController.GetByID)
+		departments.PUT("/:id",departmentController.UpdateDepartment)
+		departments.DELETE("/:id",departmentController.DeleteDepartment)
 	}
 }

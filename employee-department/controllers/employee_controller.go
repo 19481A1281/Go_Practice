@@ -85,3 +85,28 @@ func (c *EmployeeController) Delete(ctx *gin.Context) {
 		"message": "employee deleted",
 	})
 }
+
+func (c *EmployeeController) Update(ctx *gin.Context){
+	id, _ := strconv.Atoi(ctx.Param("id"))
+
+	var employee models.Employee
+
+	if err:= ctx.ShouldBindJSON(&employee); err!=nil{
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":err.Error(),
+		})
+		return
+	}
+
+	employee.ID = uint(id)
+
+	err := c.service.UpdateEmployee(&employee)
+	if err!=nil{
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK,employee)
+}
