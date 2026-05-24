@@ -18,7 +18,8 @@ func SetupRoutes(
 		employees.GET("/", employeeController.GetAll)
 		employees.GET("/:id", employeeController.GetByID)
 		employees.DELETE("/:id", employeeController.Delete)
-		employees.PUT("/:id",employeeController.Update)
+		//employees.PUT("/:id",employeeController.Update)
+		employees.PATCH("/:id",employeeController.Update)
 	}
 
 	departments := router.Group("/departments")

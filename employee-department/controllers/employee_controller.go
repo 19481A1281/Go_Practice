@@ -89,24 +89,25 @@ func (c *EmployeeController) Delete(ctx *gin.Context) {
 func (c *EmployeeController) Update(ctx *gin.Context){
 	id, _ := strconv.Atoi(ctx.Param("id"))
 
-	var employee models.Employee
+	var updates map[string]interface{}
 
-	if err:= ctx.ShouldBindJSON(&employee); err!=nil{
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error":err.Error(),
+	if err := ctx.ShouldBindJSON(&updates); err !=nil{
+		ctx.JSON(http.StatusBadRequest,gin.H{
+			"error": err.Error(),
 		})
 		return
 	}
 
-	employee.ID = uint(id)
+	err := c.service.UpdateEmployee(uint(id),updates)
 
-	err := c.service.UpdateEmployee(&employee)
 	if err!=nil{
-		ctx.JSON(http.StatusInternalServerError, gin.H{
+		ctx.JSON(http.StatusInternalServerError,gin.H{
 			"error":err.Error(),
 		})
 		return
 	}
 
-	ctx.JSON(http.StatusOK,employee)
+	ctx.JSON(http.StatusOK,gin.H{
+		"message": "employee updated",
+	})
 }

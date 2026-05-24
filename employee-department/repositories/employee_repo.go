@@ -2,6 +2,8 @@ package repositories
 
 import (
 	"demo/employee-department/models"
+	"errors"
+
 	"gorm.io/gorm"
 )
 
@@ -10,7 +12,7 @@ type EmployeeRepository interface {
 	Create(employee *models.Employee) error
 	GetAll() ([]models.Employee, error)
 	GetByID(id uint) (*models.Employee, error)
-	Update(employee *models.Employee) error
+	Update(id uint,updates map[string]interface{}) error
 	Delete(id uint) error
 }
 
@@ -49,8 +51,13 @@ func (r *employeeRepository) GetByID(id uint) (*models.Employee, error) {
 	return &employee, nil
 }
 
-func (r *employeeRepository) Update(employee *models.Employee) error {
-	return r.db.Save(employee).Error
+func (r *employeeRepository) Update(id uint,updates map[string]interface{}) error {
+	result := r.db.Model(&models.Employee{}).Where("id = ?",id).Updates(updates)
+
+	if result.RowsAffected == 0{
+		return errors.New("Employee not found")
+	}
+	return result.Error
 }
 
 func (r *employeeRepository) Delete(id uint) error {

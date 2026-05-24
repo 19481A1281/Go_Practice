@@ -9,7 +9,7 @@ type EmployeeService interface{
 	CreateEmployee(employee *models.Employee) error
 	GetEmployees() ([]models.Employee, error)
 	GetEmployeeByID(id uint) (*models.Employee, error)
-	UpdateEmployee(employee *models.Employee) error
+	UpdateEmployee(id uint, updates map[string]interface{}) error
 	DeleteEmployee(id uint) error
 }
 
@@ -35,8 +35,8 @@ func (s *employeeService) GetEmployeeByID(id uint) (*models.Employee, error) {
 	return s.repo.GetByID(id)
 }
 
-func (s *employeeService) UpdateEmployee(employee *models.Employee) error {
-	return s.repo.Update(employee)
+func (s *employeeService) UpdateEmployee(id uint, updates map[string]interface{}) error {
+	return s.repo.Update(id,updates)
 }
 
 func (s *employeeService) DeleteEmployee(id uint) error {
